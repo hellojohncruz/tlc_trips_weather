@@ -63,7 +63,6 @@ The independent variables are:
 ```{r library, echo=TRUE, results='hide', warning=FALSE, message=FALSE}
 library(tidyverse)
 library(arrow)
-library(weathermetrics)
 library(lubridate)
 ```
 
@@ -72,43 +71,23 @@ library(lubridate)
 ## Data Preparation
 
 **Load Historical Weather Data**
-```{r read-data-weather, warning=FALSE, message=FALSE}
-weather <- read_csv('oikolabs.csv') |> 
-  janitor::clean_names()
-```
 
-**Calculate Heat Index**
+*Calculate Heat Index*
 
 The measurements for the United States is generally in Fahrenheit. The weather data will be converted from Celsius to Fahrenheit using the *weathermetrics* library. 
 
 - Relative humidity is calculated using the temperature and dewpoint temperature.
 - Heat index is calculated using the temperature and relative humidity. 
 
-```{r heat-index, warning=FALSE, message=FALSE}
-weather <- 
-  weather |> 
-  mutate(temp_deg_f = celsius.to.fahrenheit(temperature_deg_c),
-         rel_humidity = dewpoint.to.humidity(t = temperature_deg_c, 
-                                             dp = dewpoint_temperature_deg_c, 
-                                             temperature.metric = "celsius"),
-         heat_idx = heat.index(t = temp_deg_f, 
-                               rh = rel_humidity),
-         total_precipitation_mm_of_water_equivalent = total_precipitation_mm_of_water_equivalent / 25.4) |> 
-  rename(total_precip = total_precipitation_mm_of_water_equivalent)
-```
-
-**Day of Week**
+*Day of Week*
 
 Using the *lubridate* library, we will determine the day of the week and transform the data type with factor levels. The datetime_utc will also be updated to New York's local time to match the trip records.
 
-```{r mutate-date warning=FALSE, message=FALSE}
-weather_trim <-
-  weather |> 
-  mutate(day_of_week = wday(datetime_utc, label = TRUE, week_start = 1, abbr = FALSE),
-         day_of_week = as.factor(day_of_week),
-         datetime_ny = with_tz(datetime_utc, "America/New_York")) |>
-  relocate(datetime_ny) |> 
-  select(datetime_ny, temp_deg_f, rel_humidity, heat_idx, total_precip)
+```{r read-data-weather, warning=FALSE, message=FALSE}
+weather <- read_parquet('weather.parquet') |> 
+  janitor::clean_names()
+
+knitr::kable(head(weather))
 ```
 
 ---
@@ -128,17 +107,33 @@ The NYC Taxi and Limousine Commission provides a data dictionary ['here'](https:
   - Pickup locations had to be within the NYC region and not unknown/outside of it.
 
 ```{r read-data-tlc, warning=FALSE, message=FALSE}
-tlc_trips<- read_parquet('tlc_trips.parquet')
-  
-# tlc_trips_trim <-
-#   tlc_trips |> 
-#   mutate(hourly_pickup_date = floor_date(pickup_datetime, unit = 'hour'))
+tlc_trips <- read_parquet('tlc_trips.parquet')
 ```
 
 
+```{r mutate-tlc, warning=FALSE, message=FALSE}
+tlc_trips_hourly <- 
+  tlc_trips |> 
+    group_by(pickup_floor) |> 
+    summarise(total_trips = n(),
+              avg_trip_dist = mean(trip_miles),
+              avg_trip_time = mean(trip_time),
+              avg_base_fare = mean(base_passenger_fare))
 
+knitr::kable(head(tlc_trips_hourly))
+```
 
+**Merge Datasets**
 
+```{r merge-datasets}
+trip_weather_data <- 
+  tlc_trips_hourly |> 
+  left_join(weather, by = join_by(pickup_floor == datetime_ny))
+
+write_parquet(trip_weather_data, "trip_weather_data.parquet")
+```
+
+---
 
 
 ## Relevant summary statistics 
