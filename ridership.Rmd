@@ -1,0 +1,177 @@
+---
+title: Weather and Rideshare Ridership
+author: "John Cruz"
+date: "2023-04-25"
+output: 
+  html_document: default
+  pdf_document: default
+urlcolor: blue
+---
+
+## Introduction
+
+The National Oceanic and Atmospheric Administration (['NOAA'](https://www.weather.gov/ama/heatindex#:~:text=The%20heat%20index%2C%20also%20known,sweat%20to%20cool%20itself%20off.)) defines the heat index as the apparent temperature of what the temperature feels like to the human body when relative humidity is combined with the air temperature. This has important considerations for the human body's comfort.  When the body gets too hot, it begins to perspire or sweat to cool itself off.
+
+As for the New York City subway system during the summer, it is notoriously known to have unbearable temperatures where the platform can be 104 degrees, compared to 86 degrees outside (['Curbed NY'](https://ny.curbed.com/2018/8/10/17674900/nyc-subway-summer-heat-temperatures)). 
+
+Given the health risks, and general discomfort during high heat days, this project will look into alternative modes of transportation, particularly ridesharing companies such as Uber and Lyft. 
+
+---
+
+## Research question 
+
+Does high heat index days (>=90 degrees) increase the number of trips taken with Uber or Lyft compared to non-high heat index days? 
+
+---
+
+## Data Source 
+
+**Weather ([Oikolab](https://oikolab.com/))** 
+
+Data was collected using [Oikolab API](https://docs.oikolab.com/#2-weather-data-weather) historical data API service. It collects its data from the ECWMF and NOAA. Each case represents hourly weather measurements in August 2022.
+
+**Uber & Lyft Trips ([NYC Taxi and Limousine Commission](https://www.nyc.gov/site/tlc/index.page))**
+
+Data was collected using the available ['parquet files'](https://www.nyc.gov/site/tlc/about/tlc-trip-record-data.page). The agency collects the data from Uber and Lyft. Each case represents a trip taken either via Uber or Lyft in the month of August 2022.
+
+---
+
+## Type of study 
+
+This is an observational study. 
+
+---
+
+## Variables
+
+**Dependent**
+The response variable is total trips and is numerical
+
+**Independent Variable(s)**
+The independent variables are:
+
+- heat index: numerical
+- precipitation: numerical
+- day_of_week: categorical (factor levels)
+
+*Note:* Other potential factors that are important but not included: special events (i.e. sporting event), major delays with public transportation (MTA Subway) or alternative transportation such as Citi bikes. 
+
+---
+
+## Required Libraries
+
+```{r library, echo=TRUE, results='hide', warning=FALSE, message=FALSE}
+library(tidyverse)
+library(arrow)
+library(weathermetrics)
+library(lubridate)
+```
+
+---
+
+## Data Preparation
+
+**Load Historical Weather Data**
+```{r read-data-weather, warning=FALSE, message=FALSE}
+weather <- read_csv('oikolabs.csv') |> 
+  janitor::clean_names()
+```
+
+**Calculate Heat Index**
+
+The measurements for the United States is generally in Fahrenheit. The weather data will be converted from Celsius to Fahrenheit using the *weathermetrics* library. 
+
+- Relative humidity is calculated using the temperature and dewpoint temperature.
+- Heat index is calculated using the temperature and relative humidity. 
+
+```{r heat-index, warning=FALSE, message=FALSE}
+weather <- 
+  weather |> 
+  mutate(temp_deg_f = celsius.to.fahrenheit(temperature_deg_c),
+         rel_humidity = dewpoint.to.humidity(t = temperature_deg_c, 
+                                             dp = dewpoint_temperature_deg_c, 
+                                             temperature.metric = "celsius"),
+         heat_idx = heat.index(t = temp_deg_f, 
+                               rh = rel_humidity),
+         total_precipitation_mm_of_water_equivalent = total_precipitation_mm_of_water_equivalent / 25.4) |> 
+  rename(total_precip = total_precipitation_mm_of_water_equivalent)
+```
+
+**Day of Week**
+
+Using the *lubridate* library, we will determine the day of the week and transform the data type with factor levels. The datetime_utc will also be updated to New York's local time to match the trip records.
+
+```{r mutate-date warning=FALSE, message=FALSE}
+weather_trim <-
+  weather |> 
+  mutate(day_of_week = wday(datetime_utc, label = TRUE, week_start = 1, abbr = FALSE),
+         day_of_week = as.factor(day_of_week),
+         datetime_ny = with_tz(datetime_utc, "America/New_York")) |>
+  relocate(datetime_ny) |> 
+  select(datetime_ny, temp_deg_f, rel_humidity, heat_idx, total_precip)
+```
+
+---
+
+**Load Uber and Lyft Trips**
+
+The NYC Taxi and Limousine Commission provides a data dictionary ['here'](https://www.nyc.gov/assets/tlc/downloads/pdf/data_dictionary_trip_records_hvfhs.pdf). The rideshare app companies such as Uber is coded as (HV0003) and Lyft (HV0005). 
+
+**Note: ** The data has been cleaned and filtered using the R script *tlc_data_filter.R* that is within the same GitHub repo. Here are the changes:
+
+- All the trips performed in August were found to be within two separate files for both August and September.
+- Trips were filtered because of huge outliers that were present such as:
+  - Trip time had to be >0 seconds and <= 5 hours. 
+  - Trip miles had to be >= 0.
+  - Driver pay > $0.01.
+  - Base passenger fare > $0.01.
+  - Pickup locations had to be within the NYC region and not unknown/outside of it.
+
+```{r read-data-tlc, warning=FALSE, message=FALSE}
+tlc_trips<- read_parquet('tlc_trips.parquet')
+  
+# tlc_trips_trim <-
+#   tlc_trips |> 
+#   mutate(hourly_pickup_date = floor_date(pickup_datetime, unit = 'hour'))
+```
+
+
+
+
+
+
+
+## Relevant summary statistics 
+
+Count of hours for heat index throughout the month of August 2022.
+```{r weather-summary}
+monthly <-
+  weather_trim |> 
+  mutate(month = month(datetime_ny), date = date(datetime_ny)) |> 
+  filter(month == 8) |> 
+  group_by(heat_idx) |> 
+  summarise(count = n())
+
+monthly |> 
+  ggplot(aes(x = heat_idx, y = count)) +
+  geom_bar(stat = 'identity')
+```
+Count of trips by Uber and Lyft in August. 
+```{r tlc-summary}
+trip_counts <- 
+  tlc_trips_trim |> 
+  mutate() |> 
+  group_by(app, hourly_date) |> 
+  summarise(count = n(), .groups='keep')
+
+trip_counts |> 
+  ggplot(aes(x = hourly_date, y = count, colour = app)) + 
+  geom_point(stat = 'identity') +
+  scale_y_continuous(labels = scales::comma) +
+  scale_x_datetime(date_breaks = "1 hour", date_labels = "%d")
+```
+
+
+```{r test}
+
+```
