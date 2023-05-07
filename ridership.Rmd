@@ -64,6 +64,46 @@ The independent variables are:
 library(tidyverse)
 library(arrow)
 library(lubridate)
+library(DBI)
+```
+
+```{r test}
+cnxn = dbConnect(duckdb::duckdb(), dbdir=":memory:")
+
+dbExecute(cnxn, "CREATE VIEW trip_records AS 
+                SELECT 
+                  CASE 
+                    WHEN hvfhs_license_num == 'HV0003' THEN 'Uber'
+                    WHEN hvfhs_license_num == 'HV0005' THEN 'Lyft'
+                  END AS 'app',
+                  pickup_datetime,
+                  PULocationID,
+                  trip_miles,
+                  trip_time,
+                  base_passenger_fare,
+                  driver_pay
+                FROM 'data\\*.parquet'")
+
+# dbGetQuery(cnxn, "DESCRIBE trip_records")
+```
+
+```{r test-2}
+query <- "SELECT 
+            app,
+            pickup_datetime
+          FROM trip_records
+          WHERE 
+            pickup_datetime > '2022-07-31 23:59:59' AND
+            trip_time >= 0 AND 
+            trip_time < 18000 AND 
+            trip_miles >= 0 AND
+            driver_pay > 0.01 AND
+            base_passenger_fare > 0.01 AND
+            PULocationID NOT IN(264, 265)"
+
+dbGetQuery(cnxn, query)
+
+dbDisconnect(cnxn)
 ```
 
 ---
@@ -114,7 +154,7 @@ tlc_trips <- read_parquet('tlc_trips.parquet')
 ```{r mutate-tlc, warning=FALSE, message=FALSE}
 tlc_trips_hourly <- 
   tlc_trips |> 
-    group_by(pickup_floor) |> 
+    group_by(app, pickup_floor) |> 
     summarise(total_trips = n(),
               avg_trip_dist = mean(trip_miles),
               avg_trip_time = mean(trip_time),
@@ -135,38 +175,54 @@ write_parquet(trip_weather_data, "trip_weather_data.parquet")
 
 ---
 
+```{r data}
+trip_weather_data <- 
+  read_parquet("trip_weather_data.parquet")
+```
 
 ## Relevant summary statistics 
 
 Count of hours for heat index throughout the month of August 2022.
 ```{r weather-summary}
-monthly <-
-  weather_trim |> 
-  mutate(month = month(datetime_ny), date = date(datetime_ny)) |> 
-  filter(month == 8) |> 
+trip_weather_data |> 
+  mutate(hour = hour(pickup_floor)) |> 
   group_by(heat_idx) |> 
-  summarise(count = n())
-
-monthly |> 
+  summarise(count = n()) |> 
   ggplot(aes(x = heat_idx, y = count)) +
   geom_bar(stat = 'identity')
 ```
 Count of trips by Uber and Lyft in August. 
 ```{r tlc-summary}
-trip_counts <- 
-  tlc_trips_trim |> 
-  mutate() |> 
-  group_by(app, hourly_date) |> 
-  summarise(count = n(), .groups='keep')
-
-trip_counts |> 
-  ggplot(aes(x = hourly_date, y = count, colour = app)) + 
-  geom_point(stat = 'identity') +
-  scale_y_continuous(labels = scales::comma) +
-  scale_x_datetime(date_breaks = "1 hour", date_labels = "%d")
+trip_weather_data |> 
+  ggplot(aes(x = pickup_floor, y = total_trips, colour = app)) + 
+  geom_line(stat = 'identity') +
+  scale_y_continuous(labels = scales::comma)
 ```
 
 
-```{r test}
+```{r heat-trips}
+all_trips <- 
+  trip_weather_data |> 
+  group_by(pickup_floor, heat_idx, total_precip) |> 
+  summarise(all_trips = sum(total_trips))
 
+all_trips |> 
+  ggplot(aes(x = heat_idx, y = all_trips)) + 
+  geom_point(stat = 'identity')
+```
+
+```{r heat-trips}
+trip_weather_data |> 
+  ggplot(aes(x = heat_idx, y = total_trips)) + 
+  geom_point(stat = 'identity') +
+  facet_grid(rows = vars(app))
+```
+
+```{r model}
+seasonal <-
+  trip_weather_data |> 
+  mutate(day_of_week = as.factor(wday(pickup_floor, label = FALSE, week_start = 7)))
+
+lm_mod <- lm(total_trips ~ app + heat_idx + total_precip + day_of_week, data = seasonal)
+summary(lm_mod)
 ```
