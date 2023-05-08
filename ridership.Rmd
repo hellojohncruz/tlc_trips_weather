@@ -50,9 +50,9 @@ The response variable is total trips and is numerical
 **Independent Variable(s)**
 The independent variables are:
 
-- heat index: numerical
+- type_of_day: categorical
 - precipitation: numerical
-- day_of_week: categorical (factor levels)
+- day_of_week: categorical
 
 *Note:* Other potential factors that are important but not included: special events (i.e. sporting event), major delays with public transportation (MTA Subway) or alternative transportation such as Citi bikes. 
 
@@ -65,45 +65,6 @@ library(tidyverse)
 library(arrow)
 library(lubridate)
 library(DBI)
-```
-
-```{r test}
-cnxn = dbConnect(duckdb::duckdb(), dbdir=":memory:")
-
-dbExecute(cnxn, "CREATE VIEW trip_records AS 
-                SELECT 
-                  CASE 
-                    WHEN hvfhs_license_num == 'HV0003' THEN 'Uber'
-                    WHEN hvfhs_license_num == 'HV0005' THEN 'Lyft'
-                  END AS 'app',
-                  pickup_datetime,
-                  PULocationID,
-                  trip_miles,
-                  trip_time,
-                  base_passenger_fare,
-                  driver_pay
-                FROM 'data\\*.parquet'")
-
-# dbGetQuery(cnxn, "DESCRIBE trip_records")
-```
-
-```{r test-2}
-query <- "SELECT 
-            app,
-            pickup_datetime
-          FROM trip_records
-          WHERE 
-            pickup_datetime > '2022-07-31 23:59:59' AND
-            trip_time >= 0 AND 
-            trip_time < 18000 AND 
-            trip_miles >= 0 AND
-            driver_pay > 0.01 AND
-            base_passenger_fare > 0.01 AND
-            PULocationID NOT IN(264, 265)"
-
-dbGetQuery(cnxn, query)
-
-dbDisconnect(cnxn)
 ```
 
 ---
@@ -168,17 +129,13 @@ knitr::kable(head(tlc_trips_hourly))
 ```{r merge-datasets}
 trip_weather_data <- 
   tlc_trips_hourly |> 
-  left_join(weather, by = join_by(pickup_floor == datetime_ny))
+  left_join(weather, by = join_by(pickup_floor == datetime_ny)) |> 
+  mutate(type_of_day = ifelse(heat_idx >= 90, 'hot', 'not_hot'))
 
 write_parquet(trip_weather_data, "trip_weather_data.parquet")
 ```
 
 ---
-
-```{r data}
-trip_weather_data <- 
-  read_parquet("trip_weather_data.parquet")
-```
 
 ## Relevant summary statistics 
 
@@ -203,7 +160,7 @@ trip_weather_data |>
 ```{r heat-trips}
 all_trips <- 
   trip_weather_data |> 
-  group_by(pickup_floor, heat_idx, total_precip) |> 
+  group_by(pickup_floor, heat_idx) |> 
   summarise(all_trips = sum(total_trips))
 
 all_trips |> 
@@ -213,16 +170,39 @@ all_trips |>
 
 ```{r heat-trips}
 trip_weather_data |> 
-  ggplot(aes(x = heat_idx, y = total_trips)) + 
-  geom_point(stat = 'identity') +
-  facet_grid(rows = vars(app))
+  ggplot(aes(x = heat_idx, y = total_trips, color = app)) + 
+  geom_point(stat = 'identity')
 ```
 
 ```{r model}
 seasonal <-
   trip_weather_data |> 
-  mutate(day_of_week = as.factor(wday(pickup_floor, label = FALSE, week_start = 7)))
+  mutate(day_of_week = factor(wday(pickup_floor, label = TRUE, week_start = 1), ordered = FALSE))
 
-lm_mod <- lm(total_trips ~ app + heat_idx + total_precip + day_of_week, data = seasonal)
+seasonal$day_of_week = relevel(seasonal$day_of_week, ref='Mon')
+seasonal$type_of_day = relevel(factor(seasonal$type_of_day, ordered = FALSE), ref='not_hot')
+
+lm_mod <- lm(total_trips ~ app + type_of_day + total_precip + day_of_week, data = seasonal)
 summary(lm_mod)
 ```
+
+**Normality**
+The Q-Q plot shows there is a strong "S" curvature in the left side of the band of residuals, especially -1 standard deviation away.     
+```{r qq-plot}
+ggplot(data = lm_mod, aes(sample = .resid)) +
+  stat_qq()
+```
+
+**Constant variability**
+The spread around zero does appear to have some heteroskedasticity as it is cone-shaped
+
+```{r residuals}
+ggplot(data = lm_mod, aes(x = .fitted, y = .resid)) +
+  geom_point() +
+  geom_hline(yintercept = 0, linetype = "dashed") +
+  xlab("Fitted values") +
+  ylab("Residuals")
+```
+
+**Linearity**
+It generally passes the linearity test but again because of the cone shape of the residuals, some caution needs to be used. 
