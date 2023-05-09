@@ -3,6 +3,7 @@ title: Weather and Rideshare Ridership
 author: "John Cruz"
 date: "2023-04-25"
 output: 
+  powerpoint_presentation: default
   html_document: default
   pdf_document: default
 urlcolor: blue
@@ -10,23 +11,23 @@ urlcolor: blue
 
 ## Introduction
 
-The National Oceanic and Atmospheric Administration (['NOAA'](https://www.weather.gov/ama/heatindex#:~:text=The%20heat%20index%2C%20also%20known,sweat%20to%20cool%20itself%20off.)) defines the heat index as the apparent temperature of what the temperature feels like to the human body when relative humidity is combined with the air temperature. This has important considerations for the human body's comfort.  When the body gets too hot, it begins to perspire or sweat to cool itself off.
+The National Oceanic and Atmospheric Administration (['NOAA'](https://www.weather.gov/ama/heatindex#:~:text=The%20heat%20index%2C%20also%20known,sweat%20to%20cool%20itself%20off.)) defines the heat index as the apparent temperature of what the temperature feels like to the human body when relative humidity is combined with the air temperature. This has important considerations for the human body's comfort. When the body gets too hot, it begins to perspire or sweat to cool itself off.
 
-As for the New York City subway system during the summer, it is notoriously known to have unbearable temperatures where the platform can be 104 degrees, compared to 86 degrees outside (['Curbed NY'](https://ny.curbed.com/2018/8/10/17674900/nyc-subway-summer-heat-temperatures)). 
+As for the New York City subway system during the summer, it is notoriously known to have unbearable temperatures where the platform can be 104 degrees, compared to 86 degrees outside (['Curbed NY'](https://ny.curbed.com/2018/8/10/17674900/nyc-subway-summer-heat-temperatures)).
 
-Given the health risks, and general discomfort during high heat days, this project will look into alternative modes of transportation, particularly ridesharing companies such as Uber and Lyft. 
+Given the health risks, and general discomfort during high heat days, this project will look into alternative modes of transportation, particularly ridesharing companies such as Uber and Lyft.
 
----
+------------------------------------------------------------------------
 
-## Research question 
+## Research question
 
-Does high heat index days (>=90 degrees) increase the number of trips taken with Uber or Lyft compared to non-high heat index days? 
+Does high heat index days (\>=90 degrees) increase the number of trips taken with Uber or Lyft compared to non-high heat index days?
 
----
+------------------------------------------------------------------------
 
-## Data Source 
+## Data Source
 
-**Weather ([Oikolab](https://oikolab.com/))** 
+**Weather ([Oikolab](https://oikolab.com/))**
 
 Data was collected using [Oikolab API](https://docs.oikolab.com/#2-weather-data-weather) historical data API service. It collects its data from the ECWMF and NOAA. Each case represents hourly weather measurements in August 2022.
 
@@ -34,29 +35,27 @@ Data was collected using [Oikolab API](https://docs.oikolab.com/#2-weather-data-
 
 Data was collected using the available ['parquet files'](https://www.nyc.gov/site/tlc/about/tlc-trip-record-data.page). The agency collects the data from Uber and Lyft. Each case represents a trip taken either via Uber or Lyft in the month of August 2022.
 
----
+------------------------------------------------------------------------
 
-## Type of study 
+## Type of study
 
-This is an observational study. 
+This is an observational study.
 
----
+------------------------------------------------------------------------
 
 ## Variables
 
-**Dependent**
-The response variable is total trips and is numerical
+**Dependent** The response variable is total trips and is numerical
 
-**Independent Variable(s)**
-The independent variables are:
+**Independent Variable(s)** The independent variables are:
 
-- type_of_day: categorical
-- precipitation: numerical
-- day_of_week: categorical
+-   type_of_day: categorical
+-   precipitation: numerical
+-   day_of_week: categorical
 
-*Note:* Other potential factors that are important but not included: special events (i.e. sporting event), major delays with public transportation (MTA Subway) or alternative transportation such as Citi bikes. 
+*Note:* Other potential factors that are important but not included: special events (i.e. sporting event), major delays with public transportation (MTA Subway) or alternative transportation such as Citi bikes.
 
----
+------------------------------------------------------------------------
 
 ## Required Libraries
 
@@ -64,10 +63,11 @@ The independent variables are:
 library(tidyverse)
 library(arrow)
 library(lubridate)
-library(DBI)
+library(infer)
+library(psych)
 ```
 
----
+------------------------------------------------------------------------
 
 ## Data Preparation
 
@@ -75,10 +75,10 @@ library(DBI)
 
 *Calculate Heat Index*
 
-The measurements for the United States is generally in Fahrenheit. The weather data will be converted from Celsius to Fahrenheit using the *weathermetrics* library. 
+The measurements for the United States is generally in Fahrenheit. The weather data will be converted from Celsius to Fahrenheit using the *weathermetrics* library.
 
-- Relative humidity is calculated using the temperature and dewpoint temperature.
-- Heat index is calculated using the temperature and relative humidity. 
+-   Relative humidity is calculated using the temperature and dewpoint temperature.
+-   Heat index is calculated using the temperature and relative humidity.
 
 *Day of Week*
 
@@ -91,26 +91,25 @@ weather <- read_parquet('weather.parquet') |>
 knitr::kable(head(weather))
 ```
 
----
+------------------------------------------------------------------------
 
 **Load Uber and Lyft Trips**
 
-The NYC Taxi and Limousine Commission provides a data dictionary ['here'](https://www.nyc.gov/assets/tlc/downloads/pdf/data_dictionary_trip_records_hvfhs.pdf). The rideshare app companies such as Uber is coded as (HV0003) and Lyft (HV0005). 
+The NYC Taxi and Limousine Commission provides a data dictionary ['here'](https://www.nyc.gov/assets/tlc/downloads/pdf/data_dictionary_trip_records_hvfhs.pdf). The rideshare app companies such as Uber is coded as (HV0003) and Lyft (HV0005).
 
-**Note: ** The data has been cleaned and filtered using the R script *tlc_data_filter.R* that is within the same GitHub repo. Here are the changes:
+**Note:** The data has been cleaned and filtered using the R script *tlc_data_filter.R* that is within the same GitHub repo. Here are the changes:
 
-- All the trips performed in August were found to be within two separate files for both August and September.
-- Trips were filtered because of huge outliers that were present such as:
-  - Trip time had to be >0 seconds and <= 5 hours. 
-  - Trip miles had to be >= 0.
-  - Driver pay > $0.01.
-  - Base passenger fare > $0.01.
-  - Pickup locations had to be within the NYC region and not unknown/outside of it.
+-   All the trips performed in August were found to be within two separate files for both August and September.
+-   Trips were filtered because of huge outliers that were present such as:
+    -   Trip time had to be \>0 seconds and \<= 5 hours.
+    -   Trip miles had to be \>= 0.
+    -   Driver pay \> \$0.01.
+    -   Base passenger fare \> \$0.01.
+    -   Pickup locations had to be within the NYC region and not unknown/outside of it.
 
 ```{r read-data-tlc, warning=FALSE, message=FALSE}
 tlc_trips <- read_parquet('tlc_trips.parquet')
 ```
-
 
 ```{r mutate-tlc, warning=FALSE, message=FALSE}
 tlc_trips_hourly <- 
@@ -132,49 +131,6 @@ trip_weather_data <-
   left_join(weather, by = join_by(pickup_floor == datetime_ny)) |> 
   mutate(type_of_day = ifelse(heat_idx >= 90, 'hot', 'not_hot'))
 
-write_parquet(trip_weather_data, "trip_weather_data.parquet")
-```
-
----
-
-## Relevant summary statistics 
-
-Count of hours for heat index throughout the month of August 2022.
-```{r weather-summary}
-trip_weather_data |> 
-  mutate(hour = hour(pickup_floor)) |> 
-  group_by(heat_idx) |> 
-  summarise(count = n()) |> 
-  ggplot(aes(x = heat_idx, y = count)) +
-  geom_bar(stat = 'identity')
-```
-Count of trips by Uber and Lyft in August. 
-```{r tlc-summary}
-trip_weather_data |> 
-  ggplot(aes(x = pickup_floor, y = total_trips, colour = app)) + 
-  geom_line(stat = 'identity') +
-  scale_y_continuous(labels = scales::comma)
-```
-
-
-```{r heat-trips}
-all_trips <- 
-  trip_weather_data |> 
-  group_by(pickup_floor, heat_idx) |> 
-  summarise(all_trips = sum(total_trips))
-
-all_trips |> 
-  ggplot(aes(x = heat_idx, y = all_trips)) + 
-  geom_point(stat = 'identity')
-```
-
-```{r heat-trips}
-trip_weather_data |> 
-  ggplot(aes(x = heat_idx, y = total_trips, color = app)) + 
-  geom_point(stat = 'identity')
-```
-
-```{r model}
 seasonal <-
   trip_weather_data |> 
   mutate(day_of_week = factor(wday(pickup_floor, label = TRUE, week_start = 1), ordered = FALSE))
@@ -182,19 +138,102 @@ seasonal <-
 seasonal$day_of_week = relevel(seasonal$day_of_week, ref='Mon')
 seasonal$type_of_day = relevel(factor(seasonal$type_of_day, ordered = FALSE), ref='not_hot')
 
+write_parquet(seasonal, "seasonal.parquet")
+```
+
+--- 
+
+## Summary Statistics
+
+Count of hours for heat index throughout the month of August 2022.
+
+```{r weather-summary}
+seasonal |> 
+  mutate(hour = hour(pickup_floor)) |> 
+  group_by(heat_idx) |> 
+  summarise(count = n()) |> 
+  ggplot(aes(x = heat_idx, y = count)) +
+  geom_bar(stat = 'identity')
+```
+
+Count of trips by Uber and Lyft in August.
+
+```{r tlc-summary}
+seasonal |> 
+  ggplot(aes(x = pickup_floor, y = total_trips, colour = app)) + 
+  geom_line(stat = 'identity') +
+  scale_y_continuous(labels = scales::comma)
+```
+
+```{r plot-heat-trips}
+trip_weather_data |> 
+  ggplot(aes(x = heat_idx, y = total_trips, color = app)) + 
+  geom_point(stat = 'identity')
+```
+
+**Observed Difference**
+```{r observed-difference}
+seasonal |> 
+  group_by(type_of_day) |> 
+  summarise(avg_trips = mean(total_trips),
+            n = n())
+```
+
+--- 
+
+## Hypothesis Testing
+
+```{r hypothesis-setup}
+obs_diff <- seasonal %>%
+  specify(total_trips ~ type_of_day) %>%
+  calculate(stat = "diff in means", order = c("hot", "not_hot"))
+```
+
+```{r null-dist}
+null_dist <- seasonal %>%
+  specify(total_trips ~ type_of_day) %>%
+  hypothesize(null = "independence") %>%
+  generate(reps = 1000, type = "permute") %>%
+  calculate(stat = "diff in means", order = c("hot", "not_hot"))
+```
+
+```{r plot-hist}
+ggplot(data = null_dist, aes(x = stat)) +
+  geom_histogram(bins = 30)
+```
+
+```{r p-value}
+null_dist %>%
+  get_p_value(obs_stat = obs_diff, direction = "two_sided")
+```
+
+```{r heat-describe}
+seasonal |> 
+  ggplot(aes(x = total_trips, color = type_of_day)) +
+  geom_density()
+```
+
+```{r t-test}
+t.test(total_trips ~ type_of_day, data = seasonal)
+```
+
+--- 
+
+## Linear Regression Model
+
+```{r model}
 lm_mod <- lm(total_trips ~ app + type_of_day + total_precip + day_of_week, data = seasonal)
 summary(lm_mod)
 ```
 
-**Normality**
-The Q-Q plot shows there is a strong "S" curvature in the left side of the band of residuals, especially -1 standard deviation away.     
+**Normality** The Q-Q plot shows there is a strong "S" curvature in the left side of the band of residuals, especially -1 standard deviation away.
+
 ```{r qq-plot}
 ggplot(data = lm_mod, aes(sample = .resid)) +
   stat_qq()
 ```
 
-**Constant variability**
-The spread around zero does appear to have some heteroskedasticity as it is cone-shaped
+**Constant variability** The spread around zero does appear to have some heteroskedasticity as it is cone-shaped
 
 ```{r residuals}
 ggplot(data = lm_mod, aes(x = .fitted, y = .resid)) +
@@ -204,5 +243,6 @@ ggplot(data = lm_mod, aes(x = .fitted, y = .resid)) +
   ylab("Residuals")
 ```
 
-**Linearity**
-It generally passes the linearity test but again because of the cone shape of the residuals, some caution needs to be used. 
+**Linearity** It generally passes the linearity test but again because of the cone shape of the residuals, some caution needs to be used.
+
+---
