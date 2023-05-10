@@ -73,6 +73,8 @@ library(psych)
 
 **Load Historical Weather Data**
 
+**Note:** The data has been cleaned and filtered using *weather_filter.Rmd* that is within the same GitHub repo. Here are the changes:
+
 *Calculate Heat Index*
 
 The measurements for the United States is generally in Fahrenheit. The weather data will be converted from Celsius to Fahrenheit using the *weathermetrics* library.
@@ -97,7 +99,7 @@ knitr::kable(head(weather))
 
 The NYC Taxi and Limousine Commission provides a data dictionary ['here'](https://www.nyc.gov/assets/tlc/downloads/pdf/data_dictionary_trip_records_hvfhs.pdf). The rideshare app companies such as Uber is coded as (HV0003) and Lyft (HV0005).
 
-**Note:** The data has been cleaned and filtered using the R script *tlc_data_filter.R* that is within the same GitHub repo. Here are the changes:
+**Note:** The data has been cleaned and filtered using *tlc_data_filter.Rmd* that is within the same GitHub repo. Here are the changes:
 
 -   All the trips performed in August were found to be within two separate files for both August and September.
 -   Trips were filtered because of huge outliers that were present such as:
@@ -109,18 +111,6 @@ The NYC Taxi and Limousine Commission provides a data dictionary ['here'](https:
 
 ```{r read-data-tlc, warning=FALSE, message=FALSE}
 tlc_trips <- read_parquet('tlc_trips.parquet')
-```
-
-```{r mutate-tlc, warning=FALSE, message=FALSE}
-tlc_trips_hourly <- 
-  tlc_trips |> 
-    group_by(app, pickup_floor) |> 
-    summarise(total_trips = n(),
-              avg_trip_dist = mean(trip_miles),
-              avg_trip_time = mean(trip_time),
-              avg_base_fare = mean(base_passenger_fare))
-
-knitr::kable(head(tlc_trips_hourly))
 ```
 
 **Merge Datasets**

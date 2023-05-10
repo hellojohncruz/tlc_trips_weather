@@ -1,28 +1,35 @@
-## Data Preparation
+---
+title: "weather_filter"
+author: "John Cruz"
+date: "2023-05-10"
+output: pdf_document
+---
 
-# **Load Historical Weather Data**
-# 
-# **Calculate Heat Index**
-#   
-# The measurements for the United States is generally in Fahrenheit. 
-# The weather data will be converted from Celsius to Fahrenheit using the *weathermetrics* library. 
-# 
-# - Relative humidity is calculated using the temperature and dewpoint temperature.
-# - Heat index is calculated using the temperature and relative humidity. 
-# weather <- read_csv('oikolabs.csv') |> 
-#   janitor::clean_names()
-# 
-# **Day of Week**
-#   
-# Using the *lubridate* library, we will determine the day of the week and transform the data type with factor levels. 
-# The datetime_utc will also be updated to New York's local time to match the trip records.
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
 
+**Load Historical Weather Data**
+
+*Calculate Heat Index*
+
+The measurements for the United States is generally in Fahrenheit. The weather data will be converted from Celsius to Fahrenheit using the *weathermetrics* library.
+
+-   Relative humidity is calculated using the temperature and dewpoint temperature.
+-   Heat index is calculated using the temperature and relative humidity.
+
+*Day of Week*
+
+Using the *lubridate* library, we will determine the day of the week and transform the data type with factor levels. The datetime_utc will also be updated to New York's local time to match the trip records.
+
+```{r library}
 library(tidyverse)
-library(arrow)
 library(weathermetrics)
 library(lubridate)
+```
 
-weather <- read_csv('oikolabs.csv') |> 
+```{r load-datat-transform, message=FALSE}
+weather <- read_csv('data//oikolabs.csv') |> 
   janitor::clean_names()
 
 weather <- 
@@ -47,3 +54,4 @@ weather_trim <-
          as.Date("2022-09-01")))
 
 write_parquet(weather_trim, 'weather.parquet')
+```
