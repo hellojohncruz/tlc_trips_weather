@@ -1,11 +1,13 @@
 ---
-title: Weather and Rideshare Ridership
+title: "Weather and Rideshare Ridership"
 author: "John Cruz"
 date: "2023-04-25"
-output: 
-  powerpoint_presentation: default
-  html_document: default
+output:
   pdf_document: default
+  html_document: default
+  beamer_presentation: default
+  powerpoint_presentation: default
+  slidy_presentation: default
 urlcolor: blue
 ---
 
@@ -45,9 +47,11 @@ This is an observational study.
 
 ## Variables
 
-**Dependent** The response variable is total trips and is numerical
+**Dependent** 
+The response variable is total trips and is numerical
 
-**Independent Variable(s)** The independent variables are:
+**Independent Variable(s)** 
+The independent variables are:
 
 -   type_of_day: categorical
 -   precipitation: numerical
@@ -65,6 +69,7 @@ library(arrow)
 library(lubridate)
 library(infer)
 library(psych)
+library(GGally)
 ```
 
 ------------------------------------------------------------------------
@@ -111,77 +116,112 @@ The NYC Taxi and Limousine Commission provides a data dictionary ['here'](https:
 
 ```{r read-data-tlc, warning=FALSE, message=FALSE}
 tlc_trips <- read_parquet('tlc_trips.parquet')
+
+knitr::kable(head(tlc_trips))
 ```
 
 **Merge Datasets**
 
 ```{r merge-datasets}
 trip_weather_data <- 
-  tlc_trips_hourly |> 
-  left_join(weather, by = join_by(pickup_floor == datetime_ny)) |> 
-  mutate(type_of_day = ifelse(heat_idx >= 90, 'hot', 'not_hot'))
+  tlc_trips |> 
+  left_join(weather, by = join_by(pickup_datetime == datetime_ny)) |> 
+  mutate(pickup_date = date(pickup_datetime)) |> 
+  select(!pickup_datetime) |> 
+  group_by(pickup_date) |> 
+  mutate(daily_trips = sum(total_trips),
+         daily_trip_dist = sum(total_trip_dist),
+         daily_trip_time = sum(total_trip_time),
+         daily_base_fare = sum(total_base_fare),
+         max_temp_deg_f = max(temp_deg_f),
+         max_heat_idx = max(heat_idx),
+         daily_precip = sum(total_precip),
+         .keep = "none") |> 
+  distinct() |> 
+  mutate(type_of_day = ifelse(max_heat_idx >= 90, 'hot', 'not_hot'),
+         day_of_week = factor(wday(pickup_date, label = TRUE, week_start = 1), ordered = FALSE)) 
 
-seasonal <-
-  trip_weather_data |> 
-  mutate(day_of_week = factor(wday(pickup_floor, label = TRUE, week_start = 1), ordered = FALSE))
+trip_weather_data$day_of_week = relevel(trip_weather_data$day_of_week, ref='Mon')
+trip_weather_data$type_of_day = relevel(factor(trip_weather_data$type_of_day, ordered = FALSE), ref='not_hot')
 
-seasonal$day_of_week = relevel(seasonal$day_of_week, ref='Mon')
-seasonal$type_of_day = relevel(factor(seasonal$type_of_day, ordered = FALSE), ref='not_hot')
-
-write_parquet(seasonal, "seasonal.parquet")
+write_parquet(trip_weather_data, "trip_weather_data.parquet")
 ```
 
 --- 
 
 ## Summary Statistics
 
-Count of hours for heat index throughout the month of August 2022.
+**Maximum Daily Heat Index**
+Highest Daily Heat Index throughout August 2022
 
 ```{r weather-summary}
-seasonal |> 
-  mutate(hour = hour(pickup_floor)) |> 
-  group_by(heat_idx) |> 
-  summarise(count = n()) |> 
-  ggplot(aes(x = heat_idx, y = count)) +
-  geom_bar(stat = 'identity')
+
+trip_weather_data |> 
+  ggplot(aes(x = pickup_date, y = max_heat_idx, color = type_of_day)) +
+  geom_point(stat = 'identity') +
+  theme_classic() +
+  labs(x = '', y ='', title = "Maximum Daily Heat Index", subtitle = "August 2022", caption = "Figure 1") +
+  theme(legend.position = "top",
+        legend.justification = c(0, 1)) +
+  scale_color_manual(values = c('#4E79A7', '#F28E2B'), name = '')
 ```
 
-Count of trips by Uber and Lyft in August.
+**Total Daily Trips**
+Total daily trips in August.
 
 ```{r tlc-summary}
-seasonal |> 
-  ggplot(aes(x = pickup_floor, y = total_trips, colour = app)) + 
+trip_weather_data |> 
+  ggplot(aes(x = pickup_date, y = daily_trips)) + 
   geom_line(stat = 'identity') +
-  scale_y_continuous(labels = scales::comma)
+  scale_y_continuous(labels = scales::comma) +
+  theme_bw() +
+  labs(title = "Total Daily Trips",
+       subtitle = "August 2022", 
+       caption = "Figure 2")
 ```
+
+**Heat Index vs. Daily Trips**
 
 ```{r plot-heat-trips}
 trip_weather_data |> 
-  ggplot(aes(x = heat_idx, y = total_trips, color = app)) + 
-  geom_point(stat = 'identity')
+  ggplot(aes(x = max_heat_idx, y = daily_trips)) + 
+  geom_point(stat = 'identity') +
+  labs(title = 'Max Heat Index vs. Daily Trips', subtitle = 'August 2022', caption = "Figure 3", x = 'heat index', y = 'total daily trips') +
+  theme_classic()
 ```
 
 **Observed Difference**
 ```{r observed-difference}
-seasonal |> 
+comparison <-
+  trip_weather_data |> 
   group_by(type_of_day) |> 
-  summarise(avg_trips = mean(total_trips),
+  summarise(avg_trips = mean(daily_trips),
             n = n())
+
+knitr::kable(comparison, caption = "Observed Differences")
 ```
+
+Here we can see a scatterplot that shows no general trend where as the heat index increases, the number of trips increase as well. However, viewing the observed difference averages, we do see that there is a small increase of average trips taken on high heat index days compared to non-high heat index days. 
 
 --- 
 
 ## Hypothesis Testing
 
+To test if the small increase of ridership is statistically significant, a hypothesis test will be used to confirm this. The test will utilize bootstrapping to create a normal distribution of the one-month sample.
+
+```{r set-seed}
+set.seed(2023)
+```
+
 ```{r hypothesis-setup}
-obs_diff <- seasonal %>%
-  specify(total_trips ~ type_of_day) %>%
+obs_diff <- trip_weather_data %>%
+  specify(daily_trips ~ type_of_day) %>%
   calculate(stat = "diff in means", order = c("hot", "not_hot"))
 ```
 
 ```{r null-dist}
-null_dist <- seasonal %>%
-  specify(total_trips ~ type_of_day) %>%
+null_dist <- trip_weather_data %>%
+  specify(daily_trips ~ type_of_day) %>%
   hypothesize(null = "independence") %>%
   generate(reps = 1000, type = "permute") %>%
   calculate(stat = "diff in means", order = c("hot", "not_hot"))
@@ -189,50 +229,79 @@ null_dist <- seasonal %>%
 
 ```{r plot-hist}
 ggplot(data = null_dist, aes(x = stat)) +
-  geom_histogram(bins = 30)
+  geom_histogram(bins = 30) +
+  labs(caption = "Figure 4")
 ```
 
-```{r p-value}
-null_dist %>%
-  get_p_value(obs_stat = obs_diff, direction = "two_sided")
-```
+After confirming the normality of the distribution a two-tailed t-test will be performed.
 
-```{r heat-describe}
-seasonal |> 
-  ggplot(aes(x = total_trips, color = type_of_day)) +
-  geom_density()
-```
+
 
 ```{r t-test}
-t.test(total_trips ~ type_of_day, data = seasonal)
+t.test(daily_trips ~ type_of_day, data = trip_weather_data)
 ```
 
+Using a 95% confidence t-test, it tells us that we are unable to reject the null hypothesis and claim that a high heat index increases the total daily trips taken using Uber or Lyft. We see in the confidence interval, it includes zero, where as the p-value is also 0.6675 which is />0.05 alpha threshold. 
+
 --- 
+
+Even with the failure to reject the null hypothesis, there are other controlling variables to account for that may influence how a heat index may be prove to be useful. A multiple linear regression model will be created to account for the previous seasonal variability accounted for in *Figure 2*. This will factor out each day of the week, having Monday as the reference variable. Also included, will be the daily total precipitation. 
+
+```{r week}
+ggplot(data = trip_weather_data, aes(x = day_of_week, y = daily_trips)) +
+  geom_boxplot() +
+  theme_bw()
+```
+
+```{r daily-precip}
+ggplot(data = trip_weather_data, aes(x = daily_precip, y = daily_trips)) +
+  geom_point()
+```
 
 ## Linear Regression Model
 
 ```{r model}
-lm_mod <- lm(total_trips ~ app + type_of_day + total_precip + day_of_week, data = seasonal)
+lm_mod <- lm(daily_trips ~ type_of_day + daily_precip + day_of_week, data = trip_weather_data)
 summary(lm_mod)
 ```
 
-**Normality** The Q-Q plot shows there is a strong "S" curvature in the left side of the band of residuals, especially -1 standard deviation away.
+**Results**
+
+The linear regression model is:
+$\hat{y} = 467970 + 21912 \times type\_of\_dayhot +  11237 \times daily\_precip + 19306 \times day\_of\_weekTue + 53607 \times day\_of\_weekWed + 82585 \times day\_of\_weekThu + 131433 \times day\_of\_weekFri + 190104 \times day\_of\_weekSat + 93376 \times day\_of\_weekSun + \epsilon$
+
+When controlling for the seasonality of the days of the week, the heat index (*type_of_dayhot*) became statistically significant. Holding all other variables constant, when the heat index is />90 we can estimate an increase of 21,912 trips than non high heat index days. As for the practical significance of the variable, it is quite surprisingly a significant predictor as the adjusted R^2 of the model is 0.9551. 
+
+---
+
+## Checking Assumptions
+
+**Normality** 
+The Q-Q plot shows there is some "S" curvature within the band of residuals, but overall is straight. 
 
 ```{r qq-plot}
 ggplot(data = lm_mod, aes(sample = .resid)) +
-  stat_qq()
+  stat_qq() +
+  labs(caption = "Figure 5")
 ```
 
-**Constant variability** The spread around zero does appear to have some heteroskedasticity as it is cone-shaped
+**Constant variability** 
+The spread around zero does appear to have some heteroskedasticity as it is cone-shaped from the middle but overall nothing alarming. 
 
 ```{r residuals}
 ggplot(data = lm_mod, aes(x = .fitted, y = .resid)) +
   geom_point() +
   geom_hline(yintercept = 0, linetype = "dashed") +
   xlab("Fitted values") +
-  ylab("Residuals")
+  ylab("Residuals") +
+  labs(caption = "Figure 6")
 ```
 
-**Linearity** It generally passes the linearity test but again because of the cone shape of the residuals, some caution needs to be used.
+**Linearity** 
+It does not pass the linearity test as from Figure 3, there is not a linear shape for heat index and trips taken. 
 
 ---
+
+## Conclusions
+
+When using the heat index as a measure of trips taken, it alone does not seem to be an indicator of higher trips being taken via Uber and Lyft. However, when controlling for the seasonal effects on the day of the week, it does become a good indicator of trip counts. However, there are some concerns about the high results of the adjusted R^2 and small scale of data used. For future research and without limitations to processing capacity, I would want to increase the data from being just using August 2022 and study the trends for a few years worth of summer data. It is also important to note that this analysis focuses on the unique environment of NYC but can the same be said for other hot climates such as Miami or Los Angeles. 
