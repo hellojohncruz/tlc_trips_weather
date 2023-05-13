@@ -32,43 +32,59 @@ library(DBI)
 cnxn = dbConnect(duckdb::duckdb(), dbdir=":memory:")
 
 dbExecute(cnxn, "CREATE VIEW tlc_trips AS 
-                  SELECT *
-                  FROM 'data\\*.parquet'")
+                      SELECT 
+                             CASE 
+                                 WHEN hvfhs_license_num == 'HV0003' THEN 'Uber'
+                                 WHEN hvfhs_license_num == 'HV0005' THEN 'Lyft'
+                                 ELSE 'Other'
+                             END AS app, 
+                             pickup_datetime, 
+                             dropoff_datetime, 
+                             PULocationID, 
+                             trip_miles, 
+                             trip_time, 
+                             base_passenger_fare
+                      FROM 'data\\*.parquet'
+                      WHERE 
+                          trip_time >= 0 AND
+                          trip_time < 18000 AND
+                          trip_miles >= 0 AND
+                          driver_pay > 0.01 AND
+                          base_passenger_fare > 0.01 AND
+                          PULocationID NOT IN (264, 265)"
+          )
 
-query <- "SELECT 
-                 CASE 
-                     WHEN hvfhs_license_num == 'HV0003' THEN 'Uber'
-                     WHEN hvfhs_license_num == 'HV0005' THEN 'Lyft'
-                     ELSE 'Other'
-                 END AS app, 
-                 pickup_datetime, 
-                 dropoff_datetime, 
-                 PULocationID, 
-                 trip_miles, 
-                 trip_time, 
-                 base_passenger_fare
-          FROM tlc_trips
-          WHERE 
-              pickup_datetime > '2022-07-31 23:59:59'AND 
-              pickup_datetime < '2022-09-01 00:00:00'AND
-              trip_time >= 0 AND
-              trip_time < 18000 AND
-              trip_miles >= 0 AND
-              driver_pay > 0.01 AND
-              base_passenger_fare > 0.01 AND
-              PULocationID NOT IN (264, 265)
+query <- "WITH floor_date AS(
+                SELECT 
+                  app,
+                  time_bucket(interval '1 hour', pickup_datetime) AS pickup_datetime,
+                  PULocationID, 
+                  trip_miles, 
+                  trip_time, 
+                  base_passenger_fare
+                FROM tlc_trips
+          )
+          
+          SELECT 
+            app,
+            pickup_datetime,
+            PULocationID,
+            SUM(trip_miles) AS trip_miles,
+            SUM(trip_time) AS trip_time, 
+            SUM(base_passenger_fare) AS base_passenger_fare
+          FROM floor_date
+          GROUP BY app, pickup_datetime, PULocationID
          "
 
-db_trips <-
-  dbGetQuery(cnxn, query)
+db_trips <- dbGetQuery(cnxn, query)
+
 ```
 
 ```{r mutate-data, message=FALSE}
 tlc_trips <- 
   db_trips |> 
-  mutate(pickup_datetime = force_tz(pickup_datetime, tzone = 'America/New_York'),
-         pickup_floor = floor_date(pickup_datetime, unit = "hour"),
-         pickup_datetime = pickup_floor)
+  mutate(pickup_datetime = force_tz(pickup_datetime, tzone = 'America/New_York'))
+
 # removed app from group by
 tlc_trips <- 
   tlc_trips |> 
@@ -78,8 +94,10 @@ tlc_trips <-
             total_trip_time = sum(trip_time),
             total_base_fare = sum(base_passenger_fare))
 
-write_parquet(tlc_trips, 'tlc_trips.parquet')
+# write_parquet(tlc_trips, 'tlc_trips.parquet')
 ```
+
+---
 
 ## Previous Code
 

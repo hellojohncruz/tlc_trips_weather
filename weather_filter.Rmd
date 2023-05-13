@@ -18,10 +18,6 @@ The measurements for the United States is generally in Fahrenheit. The weather d
 -   Relative humidity is calculated using the temperature and dewpoint temperature.
 -   Heat index is calculated using the temperature and relative humidity.
 
-*Day of Week*
-
-Using the *lubridate* library, we will determine the day of the week and transform the data type with factor levels. The datetime_utc will also be updated to New York's local time to match the trip records.
-
 ```{r library}
 library(tidyverse)
 library(weathermetrics)
@@ -50,8 +46,8 @@ weather_trim <-
          datetime_ny = with_tz(datetime_utc, "America/New_York")) |>
   relocate(datetime_ny) |> 
   select(datetime_ny, temp_deg_f, rel_humidity, heat_idx, total_precip) |> 
-  filter(between(datetime_ny, as.Date("2022-07-31"),
-         as.Date("2022-09-01")))
+  filter(between(datetime_ny, as.Date("2021-01-01"),
+         as.Date("2022-12-31")))
 
 write_parquet(weather_trim, 'weather.parquet')
 ```

@@ -66,10 +66,11 @@ The independent variables are:
 ```{r library, echo=TRUE, results='hide', warning=FALSE, message=FALSE}
 library(tidyverse)
 library(arrow)
+library(DBI)
 library(lubridate)
+library(weathermetrics)
 library(infer)
 library(psych)
-library(GGally)
 ```
 
 ------------------------------------------------------------------------
@@ -87,13 +88,30 @@ The measurements for the United States is generally in Fahrenheit. The weather d
 -   Relative humidity is calculated using the temperature and dewpoint temperature.
 -   Heat index is calculated using the temperature and relative humidity.
 
-*Day of Week*
-
-Using the *lubridate* library, we will determine the day of the week and transform the data type with factor levels. The datetime_utc will also be updated to New York's local time to match the trip records.
-
-```{r read-data-weather, warning=FALSE, message=FALSE}
-weather <- read_parquet('weather.parquet') |> 
+```{r read-data-weather, message=FALSE}
+weather <- read_csv('data//oikolabs.csv') |> 
   janitor::clean_names()
+
+weather <- 
+  weather |> 
+  mutate(temp_deg_f = celsius.to.fahrenheit(temperature_deg_c),
+         rel_humidity = dewpoint.to.humidity(t = temperature_deg_c, 
+                                             dp = dewpoint_temperature_deg_c, 
+                                             temperature.metric = "celsius"),
+         heat_idx = heat.index(t = temp_deg_f, 
+                               rh = rel_humidity),
+         total_precipitation_mm_of_water_equivalent = total_precipitation_mm_of_water_equivalent / 25.4) |> 
+  rename(total_precip = total_precipitation_mm_of_water_equivalent)
+
+weather <-
+  weather |> 
+  mutate(day_of_week = wday(datetime_utc, label = TRUE, week_start = 1, abbr = FALSE),
+         day_of_week = as.factor(day_of_week),
+         datetime_ny = with_tz(datetime_utc, "America/New_York")) |>
+  relocate(datetime_ny) |> 
+  select(datetime_ny, temp_deg_f, rel_humidity, heat_idx, total_precip) |> 
+  filter(between(datetime_ny, as.Date("2021-01-01"),
+         as.Date("2022-12-31")))
 
 knitr::kable(head(weather))
 ```
@@ -106,7 +124,6 @@ The NYC Taxi and Limousine Commission provides a data dictionary ['here'](https:
 
 **Note:** The data has been cleaned and filtered using *tlc_data_filter.Rmd* that is within the same GitHub repo. Here are the changes:
 
--   All the trips performed in August were found to be within two separate files for both August and September.
 -   Trips were filtered because of huge outliers that were present such as:
     -   Trip time had to be \>0 seconds and \<= 5 hours.
     -   Trip miles had to be \>= 0.
@@ -115,12 +132,76 @@ The NYC Taxi and Limousine Commission provides a data dictionary ['here'](https:
     -   Pickup locations had to be within the NYC region and not unknown/outside of it.
 
 ```{r read-data-tlc, warning=FALSE, message=FALSE}
-tlc_trips <- read_parquet('tlc_trips.parquet')
+cnxn = dbConnect(duckdb::duckdb(), dbdir=":memory:")
 
+dbExecute(cnxn, "CREATE VIEW tlc_trips AS 
+                      SELECT 
+                             CASE 
+                                 WHEN hvfhs_license_num == 'HV0003' THEN 'Uber'
+                                 WHEN hvfhs_license_num == 'HV0005' THEN 'Lyft'
+                                 ELSE 'Other'
+                             END AS app, 
+                             pickup_datetime, 
+                             dropoff_datetime, 
+                             PULocationID, 
+                             trip_miles, 
+                             trip_time, 
+                             base_passenger_fare
+                      FROM 'data\\*.parquet'
+                      WHERE 
+                          trip_time >= 0 AND
+                          trip_time < 18000 AND
+                          trip_miles >= 0 AND
+                          driver_pay > 0.01 AND
+                          base_passenger_fare > 0.01 AND
+                          PULocationID NOT IN (264, 265)"
+          )
+
+query <- "WITH floor_date AS(
+                SELECT 
+                  app,
+                  time_bucket(interval '1 hour', pickup_datetime) AS pickup_datetime,
+                  PULocationID, 
+                  trip_miles, 
+                  trip_time, 
+                  base_passenger_fare
+                FROM tlc_trips
+          )
+          
+          SELECT 
+            app,
+            pickup_datetime,
+            PULocationID,
+            COUNT(*) as trips,
+            SUM(trip_miles) AS trip_miles,
+            SUM(trip_time) AS trip_time, 
+            SUM(base_passenger_fare) AS base_passenger_fare
+          FROM floor_date
+          GROUP BY app, pickup_datetime, PULocationID
+         "
+
+db_trips <- dbGetQuery(cnxn, query)
+
+tlc_trips <- 
+  db_trips |> 
+  mutate(pickup_datetime = force_tz(pickup_datetime, tzone = 'America/New_York'))
+
+tlc_trips <- 
+  tlc_trips |> 
+  group_by(pickup_datetime) |> 
+  summarise(total_trips = sum(trips),
+            total_trip_dist = sum(trip_miles),
+            total_trip_time = sum(trip_time),
+            total_base_fare = sum(base_passenger_fare))
+            
 knitr::kable(head(tlc_trips))
 ```
 
 **Merge Datasets**
+
+*Day of Week*
+
+Using the *lubridate* library, we will determine the day of the week and transform the data type with factor levels. The datetime_utc will also be updated to New York's local time to match the trip records.
 
 ```{r merge-datasets}
 trip_weather_data <- 
@@ -138,11 +219,18 @@ trip_weather_data <-
          daily_precip = sum(total_precip),
          .keep = "none") |> 
   distinct() |> 
-  mutate(type_of_day = ifelse(max_heat_idx >= 90, 'hot', 'not_hot'),
-         day_of_week = factor(wday(pickup_date, label = TRUE, week_start = 1), ordered = FALSE)) 
+  mutate(type_of_day = case_when(max_heat_idx >= 90 ~ 'hot', 
+                                 .default = 'normal'),
+         day_of_week = factor(wday(pickup_date, label = TRUE, week_start = 1), ordered = FALSE),
+         day_of_week = fct_relevel(day_of_week, "Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"),
+         month = month(pickup_date, label = TRUE),
+         year = year(pickup_date)) |> 
+  drop_na()
 
 trip_weather_data$day_of_week = relevel(trip_weather_data$day_of_week, ref='Mon')
-trip_weather_data$type_of_day = relevel(factor(trip_weather_data$type_of_day, ordered = FALSE), ref='not_hot')
+trip_weather_data$type_of_day = relevel(factor(trip_weather_data$type_of_day, ordered = FALSE), ref='normal')
+trip_weather_data$month = relevel(factor(trip_weather_data$month, ordered = FALSE), ref='Jan')
+trip_weather_data$year = relevel(factor(trip_weather_data$year, ordered = FALSE), ref='2021')
 
 write_parquet(trip_weather_data, "trip_weather_data.parquet")
 ```
@@ -151,23 +239,7 @@ write_parquet(trip_weather_data, "trip_weather_data.parquet")
 
 ## Summary Statistics
 
-**Maximum Daily Heat Index**
-Highest Daily Heat Index throughout August 2022
-
-```{r weather-summary}
-
-trip_weather_data |> 
-  ggplot(aes(x = pickup_date, y = max_heat_idx, color = type_of_day)) +
-  geom_point(stat = 'identity') +
-  theme_classic() +
-  labs(x = '', y ='', title = "Maximum Daily Heat Index", subtitle = "August 2022", caption = "Figure 1") +
-  theme(legend.position = "top",
-        legend.justification = c(0, 1)) +
-  scale_color_manual(values = c('#4E79A7', '#F28E2B'), name = '')
-```
-
 **Total Daily Trips**
-Total daily trips in August.
 
 ```{r tlc-summary}
 trip_weather_data |> 
@@ -180,14 +252,43 @@ trip_weather_data |>
        caption = "Figure 2")
 ```
 
+**Daily Heat Index**
+
+```{r weather-summary}
+
+trip_weather_data |> 
+  ggplot(aes(x = month, y = max_heat_idx, color = type_of_day)) +
+  geom_jitter(stat = 'identity') +
+  facet_grid(rows = vars(year(pickup_date))) +
+  theme_classic() +
+  labs(x = '', y ='', title = "Daily Heat Index", caption = "Figure 1") +
+  theme(legend.position = "top",
+        legend.justification = c(0, 1)) +
+  scale_color_manual(values = c('#4E79A7', '#F28E2B'), name = '')
+```
+
+**Day of the Week vs. Total Trips**
+
+```{r week}
+ggplot(aes(x = day_of_week, y = daily_trips), data = trip_weather_data) +
+  geom_boxplot() +
+  facet_grid(rows = vars(year(pickup_date))) +
+  theme_bw() +
+  labs(x = '', y = 'Total Trips')
+```
+
 **Heat Index vs. Daily Trips**
 
 ```{r plot-heat-trips}
 trip_weather_data |> 
-  ggplot(aes(x = max_heat_idx, y = daily_trips)) + 
+  ggplot(aes(x = max_heat_idx, y = daily_trips, color = year)) + 
   geom_point(stat = 'identity') +
-  labs(title = 'Max Heat Index vs. Daily Trips', subtitle = 'August 2022', caption = "Figure 3", x = 'heat index', y = 'total daily trips') +
-  theme_classic()
+  labs(title = 'Heat Index vs. Total Trips', caption = "Figure 3", x = 'heat index', y = 'total trips') +
+  theme_classic() +
+  theme(legend.position = "top",
+        legend.justification = c(0, 1)) +
+  scale_color_manual(values = c('#4E79A7', '#F28E2B'), name = '')
+  
 ```
 
 **Observed Difference**
@@ -210,13 +311,13 @@ Here we can see a scatterplot that shows no general trend where as the heat inde
 To test if the small increase of ridership is statistically significant, a hypothesis test will be used to confirm this. The test will utilize bootstrapping to create a normal distribution of the one-month sample.
 
 ```{r set-seed}
-set.seed(2023)
+set.seed(2000)
 ```
 
 ```{r hypothesis-setup}
 obs_diff <- trip_weather_data %>%
   specify(daily_trips ~ type_of_day) %>%
-  calculate(stat = "diff in means", order = c("hot", "not_hot"))
+  calculate(stat = "diff in means", order = c("hot", "normal"))
 ```
 
 ```{r null-dist}
@@ -224,7 +325,7 @@ null_dist <- trip_weather_data %>%
   specify(daily_trips ~ type_of_day) %>%
   hypothesize(null = "independence") %>%
   generate(reps = 1000, type = "permute") %>%
-  calculate(stat = "diff in means", order = c("hot", "not_hot"))
+  calculate(stat = "diff in means", order = c("hot", "normal"))
 ```
 
 ```{r plot-hist}
@@ -234,8 +335,6 @@ ggplot(data = null_dist, aes(x = stat)) +
 ```
 
 After confirming the normality of the distribution a two-tailed t-test will be performed.
-
-
 
 ```{r t-test}
 t.test(daily_trips ~ type_of_day, data = trip_weather_data)
@@ -247,27 +346,23 @@ Using a 95% confidence t-test, it tells us that we are unable to reject the null
 
 Even with the failure to reject the null hypothesis, there are other controlling variables to account for that may influence how a heat index may be prove to be useful. A multiple linear regression model will be created to account for the previous seasonal variability accounted for in *Figure 2*. This will factor out each day of the week, having Monday as the reference variable. Also included, will be the daily total precipitation. 
 
-```{r week}
-ggplot(data = trip_weather_data, aes(x = day_of_week, y = daily_trips)) +
-  geom_boxplot() +
-  theme_bw()
-```
 
 ```{r daily-precip}
-ggplot(data = trip_weather_data, aes(x = daily_precip, y = daily_trips)) +
+ggplot(aes(x = daily_precip, y = daily_trips), data = trip_weather_data) +
   geom_point()
 ```
 
 ## Linear Regression Model
 
 ```{r model}
-lm_mod <- lm(daily_trips ~ type_of_day + daily_precip + day_of_week, data = trip_weather_data)
+lm_mod <- lm(daily_trips ~ type_of_day + daily_precip + day_of_week + month + year, data = trip_weather_data)
 summary(lm_mod)
 ```
 
 **Results**
 
-The linear regression model is:
+The linear regression model
+
 $\hat{y} = 467970 + 21912 \times type\_of\_dayhot +  11237 \times daily\_precip + 19306 \times day\_of\_weekTue + 53607 \times day\_of\_weekWed + 82585 \times day\_of\_weekThu + 131433 \times day\_of\_weekFri + 190104 \times day\_of\_weekSat + 93376 \times day\_of\_weekSun + \epsilon$
 
 When controlling for the seasonality of the days of the week, the heat index (*type_of_dayhot*) became statistically significant. Holding all other variables constant, when the heat index is />90 we can estimate an increase of 21,912 trips than non high heat index days. As for the practical significance of the variable, it is quite surprisingly a significant predictor as the adjusted R^2 of the model is 0.9551. 
