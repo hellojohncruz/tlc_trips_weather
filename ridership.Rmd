@@ -3,10 +3,10 @@ title: "Weather and Uber & Lyft Ridership"
 author: "John Cruz"
 date: "2023-04-25"
 output:
-  pdf_document: default
-  html_document: default
-  beamer_presentation: default
   powerpoint_presentation: default
+  pdf_document: default
+  beamer_presentation: default
+  html_document: default
   slidy_presentation: default
 urlcolor: blue
 ---
@@ -291,7 +291,7 @@ trip_weather_data |>
 ```
 
 ### Observed Difference
-Viewing the observed difference, we can see out of two years worth of data, there were 51 days where the heat index was over 90 degrees. However, on average the trips taken on hot days compared to normal days were slightly higher by about 6,000 trips. 
+Viewing the observed difference, we can see out of two years worth of data, there were 51 days where the heat index was >= 90 degrees. However, on average, the trips taken on hot days compared to normal days were slightly lower by about 6,000 trips. 
 
 ```{r observed-difference}
 comparison <-
@@ -340,12 +340,12 @@ After confirming the normality of the distribution a two-tailed t-test will be p
 t.test(total_trips ~ type_of_day, data = trip_weather_data)
 ```
 
-Using a 95% confidence t-test, it tells us that we are unable to reject the null hypothesis and claim that a high heat index increases the total daily trips taken using Uber or Lyft. We see in the confidence interval, it includes zero, where as the p-value is also 0.6675 which is />0.05 alpha threshold. 
+Using a 95% confidence t-test, it tells us that we are unable to reject the null hypothesis and claim that a high heat index differs from non-high heat days. We see in the confidence interval (-15439.73, 27620.44), it includes zero, where as the p-value is also 0.6675 which is >0.05 alpha threshold. 
 
 --- 
 
 ## Alternative Heat Index Model
-While we failed to reject the null hypothesis, using a t-test, there are other controlling variables to account for that may influence how a heat index may be prove to be useful. A multiple linear regression model will be created to account for the previous seasonal variability accounted for in our previous figures. *day_of_week* will factor out each day of the week, having Monday as the reference variable, *month* will factor out each month of the year, having January as the reference variable and *year*, factoring out for the two year data collected, having 2021 as the reference variable. Lastly, daily total precipitation will be added to account for potential variation. 
+While we failed to reject the null hypothesis, using a t-test, there are other controlling variables to account for that may influence how a heat index may prove to be useful. A multiple linear regression model will be used to account for the seasonal variability in our previous figures. **day_of_week** will factor out each day of the week, having Monday as the reference variable, **month** will factor out each month of the year, having January as the reference variable and **year**, factoring out for the two year data collected, having 2021 as the reference variable. Lastly, total precipitation will be added as well. 
 
 ### Precipitation
 Here we can see no linear trend of precipitation to total daily trips. 
@@ -353,7 +353,7 @@ Here we can see no linear trend of precipitation to total daily trips.
 ```{r daily-precip}
 ggplot(aes(x = precip, y = total_trips), data = trip_weather_data) +
   geom_point() + 
-  labs(x = 'precipitation (inches)', y = 'total trips') +
+  labs(x = 'precipitation (inches)', y = 'total trips', caption = 'Figure 6') +
   scale_y_continuous(labels = scales::comma)
 ```
 
@@ -374,19 +374,15 @@ $$
 where 
 
 $$
-\beta_1 = type\_of\_day\\
-\beta_2 = precip\\
-\beta_3 = day\_of\_week\\
-\beta_4 = month\\
-\beta_5 = year\\
+\beta_1 = type\_of\_day, \beta_2 = precip, \beta_3 = day\_of\_week, \beta_4 = month, \beta_5 = year\\
 $$
+
+### Results
 
 ```{r model}
 lm_mod <- lm(total_trips ~ type_of_day + precip + day_of_week + month + year, data = trip_weather_data)
 summary(lm_mod)
 ```
-
-### Results
 
 The linear regression model
 
@@ -428,11 +424,11 @@ The Q-Q plot shows there is some "S" curvature within the band of residuals, but
 ```{r qq-plot}
 ggplot(data = lm_mod, aes(sample = .resid)) +
   stat_qq() +
-  labs(caption = "Figure 5")
+  labs(caption = "Figure 7")
 ```
 
 **Constant variability** 
-The spread around zero does appear to have some heteroskedasticity as it is cone-shaped from the middle but overall nothing alarming. 
+The spread around zero does appear to have some heteroskedasticity as it is cone-shaped but overall nothing alarming. 
 
 ```{r residuals}
 ggplot(data = lm_mod, aes(x = .fitted, y = .resid)) +
@@ -440,14 +436,16 @@ ggplot(data = lm_mod, aes(x = .fitted, y = .resid)) +
   geom_hline(yintercept = 0, linetype = "dashed") +
   xlab("Fitted values") +
   ylab("Residuals") +
-  labs(caption = "Figure 6")
+  labs(caption = "Figure 8")
 ```
 
 **Linearity** 
-It does not pass the linearity test as from Figure 3, there is not a linear shape for heat index and trips taken. 
+It passes the linearity test, even though there is some initial curve in Figure 4.  
 
 ---
 
-## Conclusions
+## Conclusion
 
-When using the heat index as a measure of trips taken, it alone does not seem to be an indicator of higher trips being taken via Uber and Lyft. However, when controlling for the seasonal effects on the day of the week, it does become a good indicator of trip counts. However, there are some concerns about the high results of the adjusted R^2 and small scale of data used. For future research and without limitations to processing capacity, I would want to increase the data from being just using August 2022 and study the trends for a few years worth of summer data. It is also important to note that this analysis focuses on the unique environment of NYC but can the same be said for other hot climates such as Miami or Los Angeles. 
+When using the heat index as a measure of trips taken, it alone does not seem to be an indicator of higher trips being taken via Uber and Lyft. However, when controlling for the seasonal effects, it does become a statistically significant indicator of trip counts. 
+
+There are some concerns about the high results of the adjusted R^2 and the yearly data used. Since the years were being held constant, this is partially because of the recovery of the industry since the pandemic. Trip counts are not fully where it was prior and more investigating has to be performed to understand riders behaviors commuting around the NYC region. It is also important to be aware that this analysis focuses on the unique environment of NYC but can the same be said for other hot climates such as Miami or Los Angeles? 
